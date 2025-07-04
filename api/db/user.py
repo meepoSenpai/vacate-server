@@ -76,6 +76,7 @@ class User(SQLModel, table=True):
         return country_holidays(self.country_code)
 
     async def get_remaining_vacation(self, year: int | None = None):
+        from .vacation import ConfirmationStatus as CS
         if year is None:
             year = date.today().year
         for vacation in self.vacations:
@@ -85,12 +86,12 @@ class User(SQLModel, table=True):
                 vacation.duration
                 for vacation in self.vacations
                 if vacation.start.year == year
-                and vacation.confirmed
+                and vacation.confirmed == CS.CONFIRMED
             ]
         )
         return self.vacation_amount - total_vacation
 
-    async def add_vacation(self, start: date, end: date):
+    async def request_vacation(self, start: date, end: date | None = None):
         from .vacation import Vacation
 
         await Vacation.create(user_id=self.id, start=start, end=end)

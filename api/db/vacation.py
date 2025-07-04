@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from enum import Enum
 from typing import Self
 from sqlalchemy.exc import NoResultFound
 from sqlmodel import Field, select
@@ -16,12 +17,20 @@ class NotEnoughVacation(Exception):
     pass
 
 
+class ConfirmationStatus(Enum):
+    PENDING=0
+    CONFIRMED=1
+    DENIED=2
+
+
 class Vacation(SQLModel, table=True):
     hidden_id: int | None = Field(primary_key=True)
     user_id: int = Field(foreign_key="user.hidden_id")
     start: date
     end: date
-    confirmed: bool = Field(default=False)
+    confirmed: ConfirmationStatus = Field(default=ConfirmationStatus.PENDING)
+    denial_reason: str | None = Field(default=None)
+
 
     user: User = Relationship(back_populates="vacations")
 
@@ -80,14 +89,34 @@ class Vacation(SQLModel, table=True):
     @property
     def duration(self):
         delta = (self.end - self.start).days
+        days = []
         return len(
             [
                 self.start + timedelta(days=x)
                 for x in range(delta)
                 if (self.start + timedelta(days=x)).weekday() < 5
-                and x not in self.user.national_holidays
+                and self.start + timedelta(days=x) not in self.user.national_holidays
             ]
         )
+
+    async def confirm(self):
+        async with Database.session() as session:
+            vacation: Vacation = await session.get(Vacation, self.id)  # type: ignore[reportAssignmentType]
+            vacation.confirmed = ConfirmationStatus.CONFIRMED
+            if vacation.denial_reason:
+                vacation.denial_reason = None
+            session.add(vacation)
+            await session.commit()
+        await self.refresh()
+
+    async def deny(self, reason: str | None = None):
+        async with Database.session() as session:
+            vacation: Vacation = await session.get(Vacation, self.id)  # type: ignore[reportAssignmentType]
+            vacation.confirmed = ConfirmationStatus.DENIED
+            vacation.denial_reason = reason
+            session.add(vacation)
+            await session.commit()
+        await self.refresh()
 
     async def refresh(self):
         if vacation := await Vacation.from_id(self.id):
